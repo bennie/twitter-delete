@@ -13,6 +13,6 @@ Put your username and password in a file called "credentials.txt" looking someth
 	username: tweetyacount
 	password: seekrit
 
-The run the script.
+Then run the script.
 
 Have fun!
