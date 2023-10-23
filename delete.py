@@ -16,6 +16,7 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+
 def get_credentials() -> dict:
     credentials = dict()
     with open('credentials.txt') as f:
@@ -116,7 +117,7 @@ def main():
 
         # Find the "..." SVG and click on it
         more_links = find_more_links(brows)
- 
+
         if len(more_links) > 0:
             more_links[0].click()
 
