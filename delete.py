@@ -8,13 +8,20 @@
 import time
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, MoveTargetOutOfBoundsException, StaleElementReferenceException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+
+
+def firefox_scroll(brows, element):
+    y = element.location['y']
+    y -= 120  # We're gonna scroll past the link
+    script = f'window.scrollTo(1,{y});'  # x is 1 to avoid actually hovering over the element
+    brows.execute_script(script)
 
 
 def get_credentials() -> dict:
@@ -33,7 +40,7 @@ def get_credentials() -> dict:
 def login(creds):
     firefox_options = Options()
     firefox_options.add_argument('--width=1200')
-    firefox_options.add_argument('--height=1800')
+    firefox_options.add_argument('--height=2500')
 
     brows = webdriver.Firefox(options=firefox_options)
     brows.implicitly_wait(2)
@@ -65,25 +72,47 @@ def find_more_links(brows):
     more_links = []
     svgs = brows.find_elements("xpath", "//div[contains(@aria-label, 'Timeline') and contains(@aria-label, 'posts')]//*[name()='svg']")
     for svg in svgs:
-        if "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9" in svg.get_attribute('innerHTML'):
-            more_links.append(svg)
+        try:
+            if "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9" in svg.get_attribute('innerHTML'):
+                more_links.append(svg)
+        except StaleElementReferenceException:
+            # Tweets can contain SVGs and we might have removed those in passing. So skip any stale refs
+            pass
     return more_links
 
 
-def try_to_delete(brows) -> bool:
+def try_to_delete(brows, actions, more_link) -> bool:
+    try:
+        more_link.click()
+    except StaleElementReferenceException:
+        # Reposts can contain "..." and we might have removed those in passing. So skip any stale refs
+        pass
+
     # Click on the option to "Delete" that shows up in the menu
     try:
         elem = brows.find_element("xpath", "//span[text()='Delete']")
         elem.click()
     except NoSuchElementException:
-        print("It doesn't look like we can delete things...")
+        print("Nope...")
+        actions.send_keys(Keys.ESCAPE).perform()
         return False
 
     # Confirm the delete
     elem = brows.find_element("xpath", "//span[text()='Delete']")
     elem.click()
+    return True
 
-    time.sleep(1)
+
+def try_undo_repost(brows, actions, repost_link) -> bool:
+    try:
+        firefox_scroll(brows, repost_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
+    except StaleElementReferenceException:
+        return False
+
+    actions.move_to_element(repost_link).click().perform()
+
+    elem = WebDriverWait(brows, 20).until(EC.visibility_of_element_located((By.XPATH, "//span[text()='Undo repost']")))
+    elem.click()
     return True
 
 
@@ -106,30 +135,36 @@ def main():
     repost_count = 0
 
     while True:
+        all_actions = delete_count + reply_count + repost_count
+        if (all_actions > 0 and (all_actions % 100 == 0)):
+            print("Reloading the page at 100 actions...")
+            brows.get(url)
+            time.sleep(2)
+        elif (all_actions > 0 and (all_actions % 25 == 0)):
+            print("Pausing...")
+            time.sleep(1)
+
         # find green repost links, click on them to un-repost
         repost_links = find_repost_links(brows)
 
         if len(repost_links) > 0:
-            actions.move_to_element(repost_links[0]).click().perform()
-            repost_count += 1
-            print("Deleted repost...")
-            continue
+            didit = try_undo_repost(brows, actions, repost_links[0])
+
+            if didit:
+                repost_count += 1
+                print("Deleted repost...")
+                continue
 
         # Find the "..." SVG and click on it
         more_links = find_more_links(brows)
 
         if len(more_links) > 0:
-            more_links[0].click()
 
-            didit = try_to_delete(brows)
+            didit = try_to_delete(brows, actions, more_links[0])
 
             if didit:
                 print("Deleted tweet...")
                 delete_count += 1
-                continue
-            else:
-                print("Seems to be nothing to delete...")
-                actions.send_keys(Keys.ESCAPE).perform()
                 continue
 
         if len(more_links) < 1 and len(repost_links) < 1:
@@ -147,18 +182,25 @@ def main():
 
         last_pass = reply_count
 
+        # find green repost links, click on them to un-repost
+        repost_links = find_repost_links(brows)
+
+        for link in repost_links:
+            didit = try_undo_repost(brows, actions, link)
+
+            if didit:
+                print("Deleted repost...")
+                reply_count += 1
+
+        # main posts
         more_links = find_more_links(brows)
 
         for link in more_links:
-            link.click()
-
-            didit = try_to_delete(brows)
+            didit = try_to_delete(brows, actions, link)
 
             if didit:
                 print("Deleted reply...")
                 reply_count += 1
-            else:
-                actions.send_keys(Keys.ESCAPE).perform()
 
         if last_pass == reply_count:
             # We did a loop and had zero deletes
