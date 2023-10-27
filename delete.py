@@ -206,6 +206,8 @@ def main():
             # We did a loop and had zero deletes
             break
 
+    print(f'{delete_count} tweets deleted')
+    print(f'{repost_count} reposts deleted')
     print(f'{reply_count} replies deleted')
     time.sleep(2)
 
