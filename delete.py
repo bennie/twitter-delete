@@ -8,7 +8,7 @@
 import time
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, MoveTargetOutOfBoundsException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -206,6 +206,7 @@ def main():
             # We did a loop and had zero deletes
             break
 
+    print("\nTotals:")
     print(f'{delete_count} tweets deleted')
     print(f'{repost_count} reposts deleted')
     print(f'{reply_count} replies deleted')
