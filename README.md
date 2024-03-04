@@ -2,9 +2,9 @@
 
 This deletes all your tweets. Or it tries to, anyway.
 
-It uses python and Selenium to drive a local browser to do the work. (No twitter API usage.)
+It uses python and Selenium to drive a local Firefox browser to do the work. (No twitter API usage.)
 
-Do I really need to tell you to back things up first?
+Do I really need to tell you to back things up first? (Twitter allows you to download all your posts as an archive.)
 
 **HAVE A BACKUP.**
 
