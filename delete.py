@@ -6,9 +6,10 @@
 # https://www.geeksforgeeks.org/twitter-automation-using-selenium-python/
 
 import time
+import sys
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -57,6 +58,15 @@ def login(creds):
 
     time.sleep(2)
     return brows
+
+
+def find_like_links(brows):
+    like_links = []
+    svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(249, 24, 128)')]//*[name()='svg']")
+    for svg in svgs:
+        if "M20.884 13.19c-1.351 2.48-4.001 5.12-8.379" in svg.get_attribute('innerHTML'):
+            like_links.append(svg)
+    return like_links
 
 
 def find_repost_links(brows):
@@ -116,7 +126,19 @@ def try_undo_repost(brows, actions, repost_link) -> bool:
     return True
 
 
-def main():
+def try_unlike(brows, actions, like_link) -> bool:
+    try:
+        firefox_scroll(brows, like_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
+    except StaleElementReferenceException:
+        return False
+
+    actions.move_to_element(like_link).click().perform()
+    return True
+
+
+def delete_all_the_twitter_things():
+    global delete_count, reply_count, repost_count, like_count
+
     creds = get_credentials()
     brows = login(creds)
     actions = ActionChains(brows)
@@ -129,10 +151,6 @@ def main():
         time.sleep(2)
 
     print(url)
-
-    delete_count = 0
-    reply_count = 0
-    repost_count = 0
 
     while True:
         all_actions = delete_count + reply_count + repost_count
@@ -206,13 +224,57 @@ def main():
             # We did a loop and had zero deletes
             break
 
+    # Remove likes
+
+    while True:
+        brows.get(f'https://twitter.com/{creds["username"]}/likes')
+        time.sleep(2)
+
+        last_pass = like_count
+
+        # find likes, click on them to unlike
+        like_links = find_like_links(brows)
+
+        for link in like_links:
+            didit = try_unlike(brows, actions, link)
+
+            if didit:
+                print("Deleted like...")
+                like_count += 1
+                time.sleep(1)
+
+        if last_pass == like_count:
+            # We did a loop and had zero deletes
+            break
+
+
+    time.sleep(2)
+    brows.close()
+
+
+def main():
+    global delete_count, reply_count, repost_count, like_count
+    delete_count = 0
+    reply_count = 0
+    repost_count = 0
+    like_count = 0
+
+    # Global try/catch is bad m'kay
+    # Except when it is appropriate
+    try:
+        delete_all_the_twitter_things()
+    except TimeoutException:
+        print("\nERROR: Timeout Exception")
+        print("Stopping... try again to delete more")
+    except KeyboardInterrupt:
+        print("\nERROR: Caught Interrupt")
+        print("Stopping...")
+
     print("\nTotals:")
     print(f'{delete_count} tweets deleted')
     print(f'{repost_count} reposts deleted')
     print(f'{reply_count} replies deleted')
-    time.sleep(2)
-
-    brows.close()
+    print(f'{like_count} likes deleted')
 
 
 if __name__ == '__main__':
