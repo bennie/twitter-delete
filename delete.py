@@ -6,7 +6,7 @@
 # https://www.geeksforgeeks.org/twitter-automation-using-selenium-python/
 
 import json
-
+import os
 import time
 import sys
 
@@ -19,8 +19,13 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+DELETE_COUNT = None
+ERROR_COUNT = None
+TWEET_IDS = None
+LOGFILE = None
 
 def find_more_links(brows):
+    """ Find any of the '...' links """
     more_links = []
     svgs = brows.find_elements("xpath", "//article[contains(@tabindex, '-1')]//*[name()='svg']")
     for svg in svgs:
@@ -33,6 +38,7 @@ def find_more_links(brows):
     return more_links
 
 def find_repost_links(brows):
+    """ Find any repost icons that show green """
     repost_links = []
     svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(0, 186, 124)')]//*[name()='svg']")
     for svg in svgs:
@@ -41,30 +47,34 @@ def find_repost_links(brows):
     return repost_links
 
 def firefox_scroll(brows, element):
-    y = element.location['y']
-    y -= 120  # We're gonna scroll past the link
-    script = f'window.scrollTo(1,{y});'  # x is 1 to avoid actually hovering over the element
+    """ scroll to a given element on the screen """
+    y_loc = element.location['y']
+    y_loc -= 120  # We're gonna scroll past the link
+    script = f'window.scrollTo(1,{y_loc});'  # x is 1 to avoid actually hovering over the element
     brows.execute_script(script)
 
 def get_credentials() -> dict:
-    credentials = dict()
-    with open('credentials.txt') as f:
-        for line in f.readlines():
+    """ Read user and pass from credentials.txtr """
+    credentials = {}
+    with open('credentials.txt') as file:
+        for line in file.readlines():
             try:
                 key, value = line.split(": ")
             except ValueError:
                 print('Add your email and password in credentials file')
-                exit(0)
+                sys.exit(0)
             credentials[key] = value.rstrip(" \n")
     return credentials
 
 def login(creds):
+    """ Login to Twitter """
     firefox_options = Options()
     firefox_options.add_argument('--width=1200')
-    firefox_options.add_argument('--height=800')
+    firefox_options.add_argument('--height=1600')
 
     brows = webdriver.Firefox(options=firefox_options)
     brows.implicitly_wait(2)
+    brows.set_page_load_timeout(20)
 
     brows.get(f'https://twitter.com/i/flow/login?redirect_after_login=%2F{creds["username"]}')
 
@@ -80,7 +90,9 @@ def login(creds):
     return brows
 
 def try_to_delete(brows, actions, more_link) -> bool:
+    """ Given a link, try to delete the tweet. """
     try:
+        firefox_scroll(brows, more_link)
         more_link.click()
     except StaleElementReferenceException:
         # Reposts can contain "..." and we might have removed those in passing. So skip any stale refs
@@ -101,6 +113,7 @@ def try_to_delete(brows, actions, more_link) -> bool:
     return True
 
 def try_undo_repost(brows, actions, repost_link) -> bool:
+    """ Given a link, try to un-repost. """
     try:
         firefox_scroll(brows, repost_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
     except StaleElementReferenceException:
@@ -113,7 +126,8 @@ def try_undo_repost(brows, actions, repost_link) -> bool:
     return True
 
 def delete_all_the_twitter_things():
-    global delete_count, error_count, tweet_ids
+    """ Login and try to delete every tweetid we have """
+    global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, LOGFILE
 
     print("Loggin in.")
     creds = get_credentials()
@@ -122,16 +136,21 @@ def delete_all_the_twitter_things():
 
     time.sleep(2)
 
-    for tweet_id in tweet_ids:
+    for tweet_id in TWEET_IDS:
         url = f'https://x.com/{creds["username"]}/status/{tweet_id}'
-        if brows.current_url != url:
-            brows.get(url)
-            time.sleep(2)
-
         print(url)
+        if brows.current_url != url:
+            try:
+                brows.get(url)
+            except TimeoutException:
+                brows.refresh()
+                print("Reloading the page...")
+            time.sleep(2)
 
         if "Hmm...this page doesn’t exist. Try searching for something else." in brows.page_source:
             print("Dead page.")
+            LOGFILE.write(f"{tweet_id} DEAD\n")
+            time.sleep(2)
             continue
 
         # Look for the "..." and see if we can delete
@@ -142,7 +161,9 @@ def delete_all_the_twitter_things():
             didit = try_to_delete(brows, actions, more_links[0])
             if didit:
                 print("Deleted tweet...")
-                delete_count += 1
+                LOGFILE.write(f"{tweet_id} DELETED\n")
+                DELETE_COUNT += 1
+                time.sleep(2)
 
         # Maybe it's a repost?
         if not didit:
@@ -153,31 +174,51 @@ def delete_all_the_twitter_things():
                 didit = try_undo_repost(brows, actions, repost_links[0])
 
                 if didit:
-                    delete_count += 1
+                    DELETE_COUNT += 1
+                    LOGFILE.write(f"{tweet_id} UNREPOST\n")
                     print("Deleted repost...")
+                    time.sleep(2)
 
         if not didit:
-            error_count += 1
-
-        time.sleep(2)
+            LOGFILE.write(f"{tweet_id} NOPE\n")
+            ERROR_COUNT += 1
 
     brows.close()
 
 def main():
-    global delete_count, error_count, tweet_ids
-    delete_count = 0
-    error_count = 0
-    tweet_ids = []
+    """ The main program -- do I really need to docstring this? """
+    global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, LOGFILE
+    DELETE_COUNT = 0
+    ERROR_COUNT = 0
+    TWEET_IDS = []
 
     with open('tweets.js') as file:
         _, raw_data = file.read().split('=',1)
         data = json.loads(raw_data)
         for i in data:
-            tweet_ids.append(i["tweet"]["id_str"])
+            TWEET_IDS.append(i["tweet"]["id_str"])
 
-    print(len(tweet_ids), "tweet IDs found to delete.")
+    print(len(TWEET_IDS), "tweet IDs found to delete.")
 
-    tweet_ids.sort()
+    # Read any work done, and remove from tweet list
+    already_done = 0
+    if os.access("twitter-delete.log", os.R_OK):
+        file = open("twitter-delete.log", "r")
+        for line in file:
+            if " " in line:
+                tweetid, _ = line.split(" ")
+                TWEET_IDS.remove(tweetid)
+                already_done += 1
+
+    if already_done > 0:
+        print(f"{already_done} tweet ids already done, skipping.")
+        print(len(TWEET_IDS), "tweet IDs left to delete.")
+
+    TWEET_IDS.sort()
+
+    # Open LOGFILE to write
+
+    LOGFILE = open("twitter-delete.log", "a")
 
     # Global try/catch is bad m'kay
     # Except when it is appropriate
@@ -191,8 +232,8 @@ def main():
         print("Stopping...")
 
     print("\nTotals:")
-    print(f'{delete_count} tweets deleted')
-    print(f'{error_count} tweets couldn\'t be deleted')
+    print(f'{DELETE_COUNT} tweets deleted')
+    print(f'{ERROR_COUNT} tweets couldn\'t be deleted')
 
 
 if __name__ == '__main__':
