@@ -1,18 +1,28 @@
 # twitter-delete
 
-This deletes all your tweets. Or it tries to, anyway.
+A basic script to delete all your tweets.
 
 It uses python and Selenium to drive a local Firefox browser to do the work. (No twitter API usage.)
 
-Do I really need to tell you to back things up first? (Twitter allows you to download all your posts as an archive.)
+## How to use:
 
-**HAVE A BACKUP.**
+1. Get a backup of your tweets.
 
-Put your username and password in a file called "credentials.txt" looking something like this:
+2. Put your username and password in a file called "credentials.txt" looking something like this:
 
-	username: tweetyacount
-	password: seekrit
+```
+username: tweetyacount
+password: seekrit
+```
 
-Then run the script.
+3. Put that "credentials.txt" and "tweets.js" from your backup into the same directory
+
+4. Then run the script. And watch the tweets slowly go away
+
+```
+./delete.py
+```
 
 Have fun!
+
+Expect Twitter to slow-roll your connection or throw a few errors at you. It's awful curious how that happens if you've been deleting a few hundred tweets.

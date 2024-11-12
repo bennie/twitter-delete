@@ -5,6 +5,8 @@
 # Written with the aid of this tutorial and it's example code:
 # https://www.geeksforgeeks.org/twitter-automation-using-selenium-python/
 
+import json
+
 import time
 import sys
 
@@ -18,12 +20,31 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 
+def find_more_links(brows):
+    more_links = []
+    svgs = brows.find_elements("xpath", "//article[contains(@tabindex, '-1')]//*[name()='svg']")
+    for svg in svgs:
+        try:
+            if "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9" in svg.get_attribute('innerHTML'):
+                more_links.append(svg)
+        except StaleElementReferenceException:
+            # Tweets can contain SVGs and we might have removed those in passing. So skip any stale refs
+            pass
+    return more_links
+
+def find_repost_links(brows):
+    repost_links = []
+    svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(0, 186, 124)')]//*[name()='svg']")
+    for svg in svgs:
+        if "M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784" in svg.get_attribute('innerHTML'):
+            repost_links.append(svg)
+    return repost_links
+
 def firefox_scroll(brows, element):
     y = element.location['y']
     y -= 120  # We're gonna scroll past the link
     script = f'window.scrollTo(1,{y});'  # x is 1 to avoid actually hovering over the element
     brows.execute_script(script)
-
 
 def get_credentials() -> dict:
     credentials = dict()
@@ -37,11 +58,10 @@ def get_credentials() -> dict:
             credentials[key] = value.rstrip(" \n")
     return credentials
 
-
 def login(creds):
     firefox_options = Options()
     firefox_options.add_argument('--width=1200')
-    firefox_options.add_argument('--height=2500')
+    firefox_options.add_argument('--height=800')
 
     brows = webdriver.Firefox(options=firefox_options)
     brows.implicitly_wait(2)
@@ -58,38 +78,6 @@ def login(creds):
 
     time.sleep(2)
     return brows
-
-
-def find_like_links(brows):
-    like_links = []
-    svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(249, 24, 128)')]//*[name()='svg']")
-    for svg in svgs:
-        if "M20.884 13.19c-1.351 2.48-4.001 5.12-8.379" in svg.get_attribute('innerHTML'):
-            like_links.append(svg)
-    return like_links
-
-
-def find_repost_links(brows):
-    repost_links = []
-    svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(0, 186, 124)')]//*[name()='svg']")
-    for svg in svgs:
-        if "M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784" in svg.get_attribute('innerHTML'):
-            repost_links.append(svg)
-    return repost_links
-
-
-def find_more_links(brows):
-    more_links = []
-    svgs = brows.find_elements("xpath", "//div[contains(@aria-label, 'Timeline') and contains(@aria-label, 'posts')]//*[name()='svg']")
-    for svg in svgs:
-        try:
-            if "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9" in svg.get_attribute('innerHTML'):
-                more_links.append(svg)
-        except StaleElementReferenceException:
-            # Tweets can contain SVGs and we might have removed those in passing. So skip any stale refs
-            pass
-    return more_links
-
 
 def try_to_delete(brows, actions, more_link) -> bool:
     try:
@@ -112,7 +100,6 @@ def try_to_delete(brows, actions, more_link) -> bool:
     elem.click()
     return True
 
-
 def try_undo_repost(brows, actions, repost_link) -> bool:
     try:
         firefox_scroll(brows, repost_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
@@ -125,139 +112,72 @@ def try_undo_repost(brows, actions, repost_link) -> bool:
     elem.click()
     return True
 
-
-def try_unlike(brows, actions, like_link) -> bool:
-    try:
-        firefox_scroll(brows, like_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
-    except StaleElementReferenceException:
-        return False
-
-    actions.move_to_element(like_link).click().perform()
-    return True
-
-
 def delete_all_the_twitter_things():
-    global delete_count, reply_count, repost_count, like_count
+    global delete_count, error_count, tweet_ids
 
+    print("Loggin in.")
     creds = get_credentials()
     brows = login(creds)
     actions = ActionChains(brows)
 
-    # Load the profile and start deleting tweets
+    time.sleep(2)
 
-    url = f'https://twitter.com/{creds["username"]}'
-    if brows.current_url != url:
-        brows.get(url)
-        time.sleep(2)
-
-    print(url)
-
-    while True:
-        all_actions = delete_count + reply_count + repost_count
-        if (all_actions > 0 and (all_actions % 100 == 0)):
-            print("Reloading the page at 100 actions...")
+    for tweet_id in tweet_ids:
+        url = f'https://x.com/{creds["username"]}/status/{tweet_id}'
+        if brows.current_url != url:
             brows.get(url)
             time.sleep(2)
-        elif (all_actions > 0 and (all_actions % 25 == 0)):
-            print("Pausing...")
-            time.sleep(1)
 
-        # find green repost links, click on them to un-repost
-        repost_links = find_repost_links(brows)
+        print(url)
 
-        if len(repost_links) > 0:
-            didit = try_undo_repost(brows, actions, repost_links[0])
+        if "Hmm...this page doesn’t exist. Try searching for something else." in brows.page_source:
+            print("Dead page.")
+            continue
 
-            if didit:
-                repost_count += 1
-                print("Deleted repost...")
-                continue
-
-        # Find the "..." SVG and click on it
+        # Look for the "..." and see if we can delete
         more_links = find_more_links(brows)
 
+        didit = False
         if len(more_links) > 0:
-
             didit = try_to_delete(brows, actions, more_links[0])
-
             if didit:
                 print("Deleted tweet...")
                 delete_count += 1
-                continue
 
-        if len(more_links) < 1 and len(repost_links) < 1:
-            break
+        # Maybe it's a repost?
+        if not didit:
+            # find green repost links, click on them to un-repost
+            repost_links = find_repost_links(brows)
 
-    print(f'{delete_count} tweets deleted')
-    print(f'{repost_count} reposts deleted')
-    time.sleep(2)
+            if len(repost_links) > 0:
+                didit = try_undo_repost(brows, actions, repost_links[0])
 
-    # Remove replies
+                if didit:
+                    delete_count += 1
+                    print("Deleted repost...")
 
-    while True:
-        brows.get(f'https://twitter.com/{creds["username"]}/with_replies')
+        if not didit:
+            error_count += 1
+
         time.sleep(2)
 
-        last_pass = reply_count
-
-        # find green repost links, click on them to un-repost
-        repost_links = find_repost_links(brows)
-
-        for link in repost_links:
-            didit = try_undo_repost(brows, actions, link)
-
-            if didit:
-                print("Deleted repost...")
-                reply_count += 1
-
-        # main posts
-        more_links = find_more_links(brows)
-
-        for link in more_links:
-            didit = try_to_delete(brows, actions, link)
-
-            if didit:
-                print("Deleted reply...")
-                reply_count += 1
-
-        if last_pass == reply_count:
-            # We did a loop and had zero deletes
-            break
-
-    # Remove likes
-
-    while True:
-        brows.get(f'https://twitter.com/{creds["username"]}/likes')
-        time.sleep(2)
-
-        last_pass = like_count
-
-        # find likes, click on them to unlike
-        like_links = find_like_links(brows)
-
-        for link in like_links:
-            didit = try_unlike(brows, actions, link)
-
-            if didit:
-                print("Deleted like...")
-                like_count += 1
-                time.sleep(1)
-
-        if last_pass == like_count:
-            # We did a loop and had zero deletes
-            break
-
-
-    time.sleep(2)
     brows.close()
 
-
 def main():
-    global delete_count, reply_count, repost_count, like_count
+    global delete_count, error_count, tweet_ids
     delete_count = 0
-    reply_count = 0
-    repost_count = 0
-    like_count = 0
+    error_count = 0
+    tweet_ids = []
+
+    with open('tweets.js') as file:
+        _, raw_data = file.read().split('=',1)
+        data = json.loads(raw_data)
+        for i in data:
+            tweet_ids.append(i["tweet"]["id_str"])
+
+    print(len(tweet_ids), "tweet IDs found to delete.")
+
+    tweet_ids.sort()
 
     # Global try/catch is bad m'kay
     # Except when it is appropriate
@@ -272,9 +192,7 @@ def main():
 
     print("\nTotals:")
     print(f'{delete_count} tweets deleted')
-    print(f'{repost_count} reposts deleted')
-    print(f'{reply_count} replies deleted')
-    print(f'{like_count} likes deleted')
+    print(f'{error_count} tweets couldn\'t be deleted')
 
 
 if __name__ == '__main__':
