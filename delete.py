@@ -11,7 +11,7 @@ import time
 import sys
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import ElementNotInteractableException, ElementClickInterceptedException, NoSuchElementException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -49,7 +49,7 @@ def find_repost_links(brows):
 def firefox_scroll(brows, element):
     """ scroll to a given element on the screen """
     y_loc = element.location['y']
-    y_loc -= 120  # We're gonna scroll past the link
+    y_loc += 10  # We're gonna scroll past the link
     script = f'window.scrollTo(1,{y_loc});'  # x is 1 to avoid actually hovering over the element
     brows.execute_script(script)
 
@@ -73,7 +73,7 @@ def login(creds):
     firefox_options.add_argument('--height=1600')
 
     brows = webdriver.Firefox(options=firefox_options)
-    brows.implicitly_wait(2)
+    brows.implicitly_wait(3)
     brows.set_page_load_timeout(20)
 
     brows.get(f'https://twitter.com/i/flow/login?redirect_after_login=%2F{creds["username"]}')
@@ -92,17 +92,24 @@ def login(creds):
 def try_to_delete(brows, actions, more_link) -> bool:
     """ Given a link, try to delete the tweet. """
     try:
-        firefox_scroll(brows, more_link)
         more_link.click()
-    except StaleElementReferenceException:
-        # Reposts can contain "..." and we might have removed those in passing. So skip any stale refs
-        pass
+    except ElementNotInteractableException:
+        print("Refresh...")
+        brows.refresh()
+        more_link.click()
+    except ElementClickInterceptedException:
+        # When the head of a thread is deleted, sometimes we need to scroll back
+        # up a small amount to see the more_link unobscured.
+        print("Scroll up...")
+        actions.send_keys(Keys.HOME).perform()
+        time.sleep(0.5) # give the scroll time
+        more_link.click()
 
     # Click on the option to "Delete" that shows up in the menu
     try:
         elem = brows.find_element("xpath", "//span[text()='Delete']")
         elem.click()
-    except NoSuchElementException:
+    except NoSuchElementException or ElementNotInteractableException:
         print("Nope...")
         actions.send_keys(Keys.ESCAPE).perform()
         return False
@@ -110,6 +117,7 @@ def try_to_delete(brows, actions, more_link) -> bool:
     # Confirm the delete
     elem = brows.find_element("xpath", "//span[text()='Delete']")
     elem.click()
+
     return True
 
 def try_undo_repost(brows, actions, repost_link) -> bool:
@@ -129,7 +137,7 @@ def delete_all_the_twitter_things():
     """ Login and try to delete every tweetid we have """
     global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, LOGFILE
 
-    print("Loggin in.")
+    print("Logging in.")
     creds = get_credentials()
     brows = login(creds)
     actions = ActionChains(brows)
@@ -147,7 +155,35 @@ def delete_all_the_twitter_things():
                 print("Reloading the page...")
             time.sleep(2)
 
-        if "Hmm...this page doesn’t exist. Try searching for something else." in brows.page_source:
+        page_text = brows.find_element(By.XPATH, "/html/body").text
+
+        # The generic X page when twitter doesn't render
+        if len(page_text) < 5:
+            print("Twitter isn't loading.")
+            time.sleep(10)
+            brows.refresh()
+            time.sleep(2)
+            page_text = brows.find_element(By.XPATH, "/html/body").text
+            if len(page_text) < 5:
+                print("Twitter is being a continuing to error.")
+                brows.close()
+                print("Retry the script in a bit.")
+                sys.exit()
+
+        # Twitter's "Something went wrong" page
+        if "Something went wrong. Try reloading." in page_text:
+            print("Twitter is erroring.")
+            time.sleep(10)
+            brows.refresh()
+            time.sleep(2)
+            page_text = brows.find_element(By.XPATH, "/html/body").text
+            if "Something went wrong. Try reloading." in page_text:
+                print("Twitter is being a continuing to error.")
+                brows.close()
+                print("Retry the script in a bit.")
+                sys.exit()
+
+        if "Hmm...this page doesn’t exist. Try searching for something else." in page_text:
             print("Dead page.")
             LOGFILE.write(f"{tweet_id} DEAD\n")
             time.sleep(2)
@@ -228,7 +264,7 @@ def main():
         print("\nERROR: Timeout Exception")
         print("Stopping... try again to delete more")
     except KeyboardInterrupt:
-        print("\nERROR: Caught Interrupt")
+        print("\nERROR: Caught Interrupt.")        
         print("Stopping...")
 
     print("\nTotals:")
