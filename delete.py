@@ -86,8 +86,24 @@ def login(creds):
     password.send_keys(creds['password'])
     password.send_keys(Keys.RETURN)
 
-    time.sleep(2)
+    time.sleep(10)
     return brows
+
+def retry(brows):
+    """ Find the 'Retry' link """
+    tries = 100
+    while tries > 0:
+        print("Clicking retry...")
+        retry = brows.find_element("xpath", "//span[text()='Retry']")
+        retry.click()
+        time.sleep(2)
+        page_text = brows.find_element(By.XPATH, "/html/body").text
+        if "Something went wrong. Try reloading" not in page_text:
+            return True
+        else:
+            tries -= 1
+
+    return False
 
 def try_to_delete(brows, actions, more_link) -> bool:
     """ Given a link, try to delete the tweet. """
@@ -165,7 +181,7 @@ def delete_all_the_twitter_things():
             time.sleep(2)
             page_text = brows.find_element(By.XPATH, "/html/body").text
             if len(page_text) < 5:
-                print("Twitter is being a continuing to error.")
+                print("Twitter is continuing to error.")
                 brows.close()
                 print("Retry the script in a bit.")
                 sys.exit()
@@ -173,12 +189,8 @@ def delete_all_the_twitter_things():
         # Twitter's "Something went wrong" page
         if "Something went wrong. Try reloading." in page_text:
             print("Twitter is erroring.")
-            time.sleep(10)
-            brows.refresh()
-            time.sleep(2)
-            page_text = brows.find_element(By.XPATH, "/html/body").text
-            if "Something went wrong. Try reloading." in page_text:
-                print("Twitter is being a continuing to error.")
+            if retry(brows) is False:
+                print("Twitter is continuing to error.")
                 brows.close()
                 print("Retry the script in a bit.")
                 sys.exit()
