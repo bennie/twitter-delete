@@ -11,7 +11,13 @@ import time
 import sys
 
 from selenium import webdriver
-from selenium.common.exceptions import ElementNotInteractableException, ElementClickInterceptedException, NoSuchElementException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import (
+    ElementNotInteractableException,
+    ElementClickInterceptedException,
+    NoSuchElementException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -24,73 +30,95 @@ ERROR_COUNT = None
 TWEET_IDS = None
 LOGFILE = None
 
+
 def find_more_links(brows):
-    """ Find any of the '...' links """
+    """Find any of the '...' links"""
     more_links = []
-    svgs = brows.find_elements("xpath", "//article[contains(@tabindex, '-1')]//*[name()='svg']")
+    svgs = brows.find_elements(
+        "xpath", "//article[contains(@tabindex, '-1')]//*[name()='svg']"
+    )
     for svg in svgs:
         try:
-            if "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9" in svg.get_attribute('innerHTML'):
+            if (
+                "M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9"
+                in svg.get_attribute("innerHTML")
+            ):
                 more_links.append(svg)
         except StaleElementReferenceException:
             # Tweets can contain SVGs and we might have removed those in passing. So skip any stale refs
             pass
     return more_links
 
+
 def find_repost_links(brows):
-    """ Find any repost icons that show green """
+    """Find any repost icons that show green"""
     repost_links = []
-    svgs = brows.find_elements("xpath", "//div[contains(@style, 'rgb(0, 186, 124)')]//*[name()='svg']")
+    svgs = brows.find_elements(
+        "xpath", "//div[contains(@style, 'rgb(0, 186, 124)')]//*[name()='svg']"
+    )
     for svg in svgs:
-        if "M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784" in svg.get_attribute('innerHTML'):
+        if (
+            "M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784"
+            in svg.get_attribute("innerHTML")
+        ):
             repost_links.append(svg)
     return repost_links
 
+
 def firefox_scroll(brows, element):
-    """ scroll to a given element on the screen """
-    y_loc = element.location['y']
+    """scroll to a given element on the screen"""
+    y_loc = element.location["y"]
     y_loc += 10  # We're gonna scroll past the link
-    script = f'window.scrollTo(1,{y_loc});'  # x is 1 to avoid actually hovering over the element
+    script = f"window.scrollTo(1,{y_loc});"  # x is 1 to avoid actually hovering over the element
     brows.execute_script(script)
 
+
 def get_credentials() -> dict:
-    """ Read user and pass from credentials.txtr """
+    """Read user and pass from credentials.txtr"""
     credentials = {}
-    with open('credentials.txt') as file:
+    with open("credentials.txt") as file:
         for line in file.readlines():
             try:
                 key, value = line.split(": ")
             except ValueError:
-                print('Add your email and password in credentials file')
+                print("Add your email and password in credentials file")
                 sys.exit(0)
             credentials[key] = value.rstrip(" \n")
     return credentials
 
+
 def login(creds):
-    """ Login to Twitter """
+    """Login to Twitter"""
     firefox_options = Options()
-    firefox_options.add_argument('--width=1200')
-    firefox_options.add_argument('--height=1600')
+    firefox_options.add_argument("--width=1200")
+    firefox_options.add_argument("--height=1600")
 
     brows = webdriver.Firefox(options=firefox_options)
     brows.implicitly_wait(3)
     brows.set_page_load_timeout(20)
 
-    brows.get(f'https://twitter.com/i/flow/login?redirect_after_login=%2F{creds["username"]}')
+    brows.get(
+        f'https://twitter.com/i/flow/login?redirect_after_login=%2F{creds["username"]}'
+    )
 
-    username = WebDriverWait(brows, 20).until(EC.visibility_of_element_located((By.XPATH, '//input[@type="text"]')))
+    username = WebDriverWait(brows, 20).until(
+        EC.visibility_of_element_located((By.XPATH, '//input[@type="text"]'))
+    )
     username.send_keys(creds["username"])
     username.send_keys(Keys.RETURN)
 
-    password = WebDriverWait(brows, 20).until(EC.visibility_of_element_located((By.XPATH, '//input[@type="password"]')))
-    password.send_keys(creds['password'])
+    password = WebDriverWait(brows, 20).until(
+        EC.visibility_of_element_located((By.XPATH, '//input[@type="password"]'))
+    )
+    password.send_keys(creds["password"])
     password.send_keys(Keys.RETURN)
 
     time.sleep(10)
     return brows
 
+
 def retry(brows):
-    """ Find the 'Retry' link """
+    """Find the 'Retry' link"""
     tries = 100
     while tries > 0:
         print("Clicking retry...")
@@ -105,8 +133,9 @@ def retry(brows):
 
     return False
 
+
 def try_to_delete(brows, actions, more_link) -> bool:
-    """ Given a link, try to delete the tweet. """
+    """Given a link, try to delete the tweet."""
     try:
         more_link.click()
     except ElementNotInteractableException:
@@ -118,7 +147,7 @@ def try_to_delete(brows, actions, more_link) -> bool:
         # up a small amount to see the more_link unobscured.
         print("Scroll up...")
         actions.send_keys(Keys.HOME).perform()
-        time.sleep(0.5) # give the scroll time
+        time.sleep(0.5)  # give the scroll time
         more_link.click()
 
     # Click on the option to "Delete" that shows up in the menu
@@ -136,10 +165,13 @@ def try_to_delete(brows, actions, more_link) -> bool:
 
     return True
 
+
 def try_undo_repost(brows, actions, repost_link) -> bool:
-    """ Given a link, try to un-repost. """
+    """Given a link, try to un-repost."""
     try:
-        firefox_scroll(brows, repost_link)  # Firefox doesn't scroll on move_to_element() - work around with Javascript
+        firefox_scroll(
+            brows, repost_link
+        )  # Firefox doesn't scroll on move_to_element() - work around with Javascript
     except StaleElementReferenceException:
         return False
 
@@ -148,9 +180,12 @@ def try_undo_repost(brows, actions, repost_link) -> bool:
     except StaleElementReferenceException:
         return False
 
-    elem = WebDriverWait(brows, 20).until(EC.visibility_of_element_located((By.XPATH, "//span[text()='Undo repost']")))
+    elem = WebDriverWait(brows, 20).until(
+        EC.visibility_of_element_located((By.XPATH, "//span[text()='Undo repost']"))
+    )
     elem.click()
     return True
+
 
 def load_page(brows, creds, tweet_id):
     # Load the page
@@ -195,7 +230,7 @@ def load_page(brows, creds, tweet_id):
 
 
 def delete_all_the_twitter_things():
-    """ Login and try to delete every tweetid we have """
+    """Login and try to delete every tweetid we have"""
     global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, LOGFILE
 
     print("Logging in.")
@@ -209,7 +244,10 @@ def delete_all_the_twitter_things():
     for tweet_id in TWEET_IDS:
         page_text = load_page(brows, creds, tweet_id)
 
-        if "Hmm...this page doesn’t exist. Try searching for something else." in page_text:
+        if (
+            "Hmm...this page doesn’t exist. Try searching for something else."
+            in page_text
+        ):
             print("Dead page.")
             LOGFILE.write(f"{tweet_id} DEAD\n")
             time.sleep(2)
@@ -253,16 +291,17 @@ def delete_all_the_twitter_things():
 
     brows.close()
 
+
 def main():
-    """ The main program -- do I really need to docstring this? """
+    """The main program -- do I really need to docstring this?"""
     global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, REPOST_IDS, LOGFILE
     DELETE_COUNT = 0
     ERROR_COUNT = 0
     TWEET_IDS = []
     REPOST_IDS = []
 
-    with open('tweets.js') as file:
-        _, raw_data = file.read().split('=',1)
+    with open("tweets.js") as file:
+        _, raw_data = file.read().split("=", 1)
         data = json.loads(raw_data)
         for i in data:
             if i["tweet"]["full_text"].startswith("RT @"):
@@ -270,7 +309,9 @@ def main():
             else:
                 TWEET_IDS.append(i["tweet"]["id_str"])
 
-    print(len(TWEET_IDS), "tweets and", len(REPOST_IDS), "reposts found in source file.")
+    print(
+        len(TWEET_IDS), "tweets and", len(REPOST_IDS), "reposts found in source file."
+    )
 
     # Read any work done, and remove from tweet list
     already_done = 0
@@ -286,11 +327,9 @@ def main():
                     REPOST_IDS.remove(tweetid)
                     already_done += 1
 
-
     if already_done > 0:
         print(f"{already_done} items in our logfile as done, skipping those.")
         print(len(TWEET_IDS), "tweets and", len(REPOST_IDS), "reposts to process.")
-
 
     TWEET_IDS.sort()
     REPOST_IDS.sort()
@@ -306,13 +345,13 @@ def main():
         print("\nERROR: Timeout Exception")
         print("Stopping... try again to delete more")
     except KeyboardInterrupt:
-        print("\nERROR: Caught Interrupt.")        
+        print("\nERROR: Caught Interrupt.")
         print("Stopping...")
 
     print("\nTotals:")
-    print(f'{DELETE_COUNT} tweets deleted')
-    print(f'{ERROR_COUNT} tweets couldn\'t be deleted')
+    print(f"{DELETE_COUNT} tweets deleted")
+    print(f"{ERROR_COUNT} tweets couldn't be deleted")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
