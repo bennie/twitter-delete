@@ -143,11 +143,56 @@ def try_undo_repost(brows, actions, repost_link) -> bool:
     except StaleElementReferenceException:
         return False
 
-    actions.move_to_element(repost_link).click().perform()
+    try:
+        actions.move_to_element(repost_link).click().perform()
+    except StaleElementReferenceException:
+        return False
 
     elem = WebDriverWait(brows, 20).until(EC.visibility_of_element_located((By.XPATH, "//span[text()='Undo repost']")))
     elem.click()
     return True
+
+def load_page(brows, creds, tweet_id):
+    # Load the page
+    # handle several common twitter failure and timeout paths
+    url = f'https://x.com/{creds["username"]}/status/{tweet_id}'
+    print(url)
+
+    if brows.current_url != url:
+        try:
+            brows.get(url)
+            time.sleep(2)
+        except TimeoutException:
+            brows.refresh()
+            print("Reloading the page...")
+            time.sleep(2)
+
+    page_text = brows.find_element(By.XPATH, "/html/body").text
+
+    # The generic X page when twitter doesn't render
+    if len(page_text) < 5:
+        print("Twitter isn't loading.")
+        time.sleep(10)
+        brows.refresh()
+        time.sleep(2)
+        page_text = brows.find_element(By.XPATH, "/html/body").text
+        if len(page_text) < 5:
+            print("Twitter is continuing to error.")
+            brows.close()
+            print("Retry the script in a bit.")
+            sys.exit()
+
+    # Twitter's "Something went wrong" page
+    if "Something went wrong. Try reloading." in page_text:
+        print("Twitter is erroring.")
+        if retry(brows) is False:
+            print("Twitter is continuing to error.")
+            brows.close()
+            print("Retry the script in a bit.")
+            sys.exit()
+
+    return page_text
+
 
 def delete_all_the_twitter_things():
     """ Login and try to delete every tweetid we have """
@@ -160,40 +205,9 @@ def delete_all_the_twitter_things():
 
     time.sleep(2)
 
+    print("--- Removing tweets ---")
     for tweet_id in TWEET_IDS:
-        url = f'https://x.com/{creds["username"]}/status/{tweet_id}'
-        print(url)
-        if brows.current_url != url:
-            try:
-                brows.get(url)
-            except TimeoutException:
-                brows.refresh()
-                print("Reloading the page...")
-            time.sleep(2)
-
-        page_text = brows.find_element(By.XPATH, "/html/body").text
-
-        # The generic X page when twitter doesn't render
-        if len(page_text) < 5:
-            print("Twitter isn't loading.")
-            time.sleep(10)
-            brows.refresh()
-            time.sleep(2)
-            page_text = brows.find_element(By.XPATH, "/html/body").text
-            if len(page_text) < 5:
-                print("Twitter is continuing to error.")
-                brows.close()
-                print("Retry the script in a bit.")
-                sys.exit()
-
-        # Twitter's "Something went wrong" page
-        if "Something went wrong. Try reloading." in page_text:
-            print("Twitter is erroring.")
-            if retry(brows) is False:
-                print("Twitter is continuing to error.")
-                brows.close()
-                print("Retry the script in a bit.")
-                sys.exit()
+        page_text = load_page(brows, creds, tweet_id)
 
         if "Hmm...this page doesn’t exist. Try searching for something else." in page_text:
             print("Dead page.")
@@ -206,47 +220,57 @@ def delete_all_the_twitter_things():
 
         didit = False
         if len(more_links) > 0:
-            didit = try_to_delete(brows, actions, more_links[0])
+            try:
+                didit = try_to_delete(brows, actions, more_links[0])
+            except StaleElementReferenceException:
+                didit = False
             if didit:
                 print("Deleted tweet...")
                 LOGFILE.write(f"{tweet_id} DELETED\n")
                 DELETE_COUNT += 1
                 time.sleep(2)
 
-        # Maybe it's a repost?
-        if not didit:
-            # find green repost links, click on them to un-repost
-            repost_links = find_repost_links(brows)
-
-            if len(repost_links) > 0:
-                didit = try_undo_repost(brows, actions, repost_links[0])
-
-                if didit:
-                    DELETE_COUNT += 1
-                    LOGFILE.write(f"{tweet_id} UNREPOST\n")
-                    print("Deleted repost...")
-                    time.sleep(2)
-
         if not didit:
             LOGFILE.write(f"{tweet_id} NOPE\n")
+            print("Couldn't find anything to delete?")
             ERROR_COUNT += 1
+
+    print("--- Removing reposts ---")
+    for tweet_id in REPOST_IDS:
+        page_text = load_page(brows, creds, tweet_id)
+
+        # find green repost links, click on them to un-repost
+        repost_links = find_repost_links(brows)
+
+        for link in repost_links:
+            didit = try_undo_repost(brows, actions, link)
+
+            if didit:
+                DELETE_COUNT += 1
+                LOGFILE.write(f"{tweet_id} UNREPOST\n")
+                print("Deleted repost...")
+                time.sleep(2)
 
     brows.close()
 
 def main():
     """ The main program -- do I really need to docstring this? """
-    global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, LOGFILE
+    global DELETE_COUNT, ERROR_COUNT, TWEET_IDS, REPOST_IDS, LOGFILE
     DELETE_COUNT = 0
     ERROR_COUNT = 0
     TWEET_IDS = []
+    REPOST_IDS = []
 
     with open('tweets.js') as file:
         _, raw_data = file.read().split('=',1)
         data = json.loads(raw_data)
         for i in data:
-            TWEET_IDS.append(i["tweet"]["id_str"])
+            if i["tweet"]["full_text"].startswith("RT @"):
+                REPOST_IDS.append(i["tweet"]["id_str"])
+            else:
+                TWEET_IDS.append(i["tweet"]["id_str"])
 
-    print(len(TWEET_IDS), "tweet IDs found to delete.")
+    print(len(TWEET_IDS), "tweets and", len(REPOST_IDS), "reposts found in source file.")
 
     # Read any work done, and remove from tweet list
     already_done = 0
@@ -255,17 +279,23 @@ def main():
         for line in file:
             if " " in line:
                 tweetid, _ = line.split(" ")
-                TWEET_IDS.remove(tweetid)
-                already_done += 1
+                if tweetid in TWEET_IDS:
+                    TWEET_IDS.remove(tweetid)
+                    already_done += 1
+                if tweetid in REPOST_IDS:
+                    REPOST_IDS.remove(tweetid)
+                    already_done += 1
+
 
     if already_done > 0:
-        print(f"{already_done} tweet ids already done, skipping.")
-        print(len(TWEET_IDS), "tweet IDs left to delete.")
+        print(f"{already_done} items in our logfile as done, skipping those.")
+        print(len(TWEET_IDS), "tweets and", len(REPOST_IDS), "reposts to process.")
+
 
     TWEET_IDS.sort()
+    REPOST_IDS.sort()
 
     # Open LOGFILE to write
-
     LOGFILE = open("twitter-delete.log", "a")
 
     # Global try/catch is bad m'kay
